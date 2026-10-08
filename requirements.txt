@@ -1,0 +1,66 @@
+# ============================================================
+# fine_tune_vlm conda 環境 — 精簡版套件需求 (curated requirements)
+# ============================================================
+# 調查方式：conda run -n fine_tune_vlm pip list --format=freeze
+# 調查日期：2026-09-11　|　Python 3.10.21
+#
+# 本檔案只保留跟「資料處理」「AI 模型訓練 / VLM 微調」「影像辨識」「推論
+# 服務」直接相關的套件，不列出完整環境內容。已排除：
+#   - Jupyter/開發工具：ipykernel, ipython, jupyter_client, debugpy, pytest ...
+#   - 底層 CUDA/NVIDIA 函式庫：nvidia-*, cuda-*（隨 torch/vllm 安裝時自動
+#     解析，不需手動釘版本）
+#   - 可觀測性/次要依賴：opentelemetry-*, prometheus_client, grpcio,
+#     googleapis-common-protos ...（fastapi/vllm 的間接依賴，隨主套件安裝）
+#
+# 完整環境快照（含全部套件與 flash-attn 安裝指令）請參考
+# requirements-fine_tune_vlm.txt —— 那份是 pip freeze 的原始存檔，僅供重建
+# 環境時參考版本組合，不是給 `pip install -r` 直接安裝用的可攜式 manifest。
+
+# ---- 深度學習框架 Deep learning framework ----
+torch==2.13.0
+torchvision==0.28.0
+torchaudio==2.11.0
+triton==3.7.1
+
+# ---- VLM / LLM 微調 Fine-tuning stack ----
+transformers==5.16.1
+accelerate==1.14.0
+peft==0.20.0
+trl==1.12.0
+tokenizers==0.23.2
+safetensors==0.8.0
+sentencepiece==0.2.2
+mistral_common==1.11.7
+einops==0.8.2
+huggingface_hub==1.30.0
+wandb==0.30.0
+
+# ---- 資料處理 / 資料集 Data handling & datasets ----
+numpy==2.2.6
+pandas==2.3.3
+pyarrow==25.0.1
+datasets==5.0.1
+scipy==1.15.3
+openpyxl==3.1.5
+
+# ---- 影像處理 / 影像辨識 Image processing & recognition ----
+pillow==12.3.0
+opencv-python-headless==5.0.0.93
+imagehash==4.3.2
+
+# ---- 推論服務 Inference serving stack ----
+vllm==0.28.0
+flashinfer-python==0.6.16.post3
+xgrammar==0.2.6
+fastapi==0.136.3
+starlette==1.6.0
+uvicorn==0.52.4
+sse-starlette==3.4.11
+httpx==0.28.1
+mcp==2.2.0
+openai==3.10.0
+anthropic==0.71.0
+
+# ---- 選用：flash-attention ----
+# 需依實際安裝的 torch CXX11 ABI 與版本挑選對應 wheel，無法直接 pip install
+# 固定版本；下載指令與判斷邏輯見 requirements-fine_tune_vlm.txt 檔尾。

@@ -1,0 +1,29 @@
+# 訓練
+CUDA_VISIBLE_DEVICES=0,1  python ./scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py --max_steps 100 --save_steps 50 --eval_steps 50 --new_run
+
+# 合併
+CUDA_VISIBLE_DEVICES="" python scripts/merge_lora_mistral_small.py \
+  --checkpoint Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/checkpoint-100 \
+  --merged_path Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-100
+
+# 正式訓練
+./scripts/run_formal_finetune.sh --model_id Mistral-Small-3.2-24B-Instruct-2506 --num_train_epochs 5 \
+--weight_decay 0.01 --eval_strategy steps --eval_steps 100  
+
+#
+VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 vllm serve Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-100 \
+  --tokenizer Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-100 \
+  --load_format safetensors \
+  --tool-call-parser mistral \
+  --enable-auto-tool-choice
+
+
+
+VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=0 \
+  /root/miniconda3/envs/Mistral3-fa-vllm/bin/vllm serve "$RUN_DIR/merged" \
+  --tokenizer_mode mistral \
+  --config_format mistral \
+  --load_format auto \
+  --enable-auto-tool-choice \
+  --tool-call-parser mistral \
+  --max-model-len 8192  
