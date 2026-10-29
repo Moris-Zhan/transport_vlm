@@ -219,3 +219,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 flash_attn-2.8.2+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+
+# wandb 等金鑰（從 configs/secrets.yaml.example 複製）
+configs/secrets.yaml

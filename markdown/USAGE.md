@@ -1,33 +1,15 @@
-# 手動測試：訓練 → 合併 → vLLM serve → 推論驗證
+# 手動流程：訓練 → 合併 → vLLM serve → 推論驗證（Mistral-Small-3.2-24B）
 
-這份文件記錄 `scripts/smoke_test_train_merge_vllm.sh`（Ministral-3-8B 微調的「起飛前檢查」煙霧
-測試）內部實際執行的四個階段，拆成可以逐段手動執行的指令，方便個別除錯、或跳過已知沒問題
-的階段（例如訓練+合併很花時間，只想重跑 vLLM serve + 推論測試那兩段）。
+這份文件把 Mistral-Small-3.2-24B 微調後「訓練 → 合併 → 部署 → 驗證」的四個階段拆成可以逐段手動
+執行的指令，方便個別除錯、或跳過已知沒問題的階段（例如只想重跑 vLLM serve + 推論測試那兩段）。
+指令取自 `scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py`、
+`scripts/merge_lora_mistral_small.py` 檔頭的用法說明，以及 `markdown/HANDOFF-2026-10-07-H100訓練.md`。
 
-所有指令都假設在 repo root（`transport_vlm_refactor/`）底下執行。
+所有指令都假設在 repo root 底下執行。
 
-## 自動化版本
+## 環境
 
-不需要手動分段時，直接跑整支腳本即可，四個階段會依序自動執行，成功或失敗都會清掉這次產生
-的 `Output/` run 目錄（含 ~16GB 的 merged 模型）：
-
-```bash
-./scripts/smoke_test_train_merge_vllm.sh
-```
-
-若想跑完後保留 run 目錄（例如接下來要手動重跑 3/4、4/4 階段），可以：
-
-```bash
-SMOKE_TEST_KEEP_OUTPUT=1 ./scripts/smoke_test_train_merge_vllm.sh
-```
-
-腳本支援的其他環境變數（訓練 step 數、測試圖片數量、port、逾時秒數等）見
-`scripts/smoke_test_train_merge_vllm.sh` 檔頭註解。
-
-## flash-attn 訓練環境
-
-訓練腳本預設 `--attn_implementation flash_attention_2`，需要裝有對應 torch 版本 flash_attn 的
-conda env。這台機器（H100、driver 535 / CUDA 12.2）上的 env 分三層，每層都是從上一層 clone 出來的：
+這台機器（2× H100、driver 535 / CUDA 12.2）上的 conda env 分三層，每層都是從上一層 clone 出來的：
 
 | env | 內容 | 重建方式 |
 |---|---|---|
@@ -35,59 +17,58 @@ conda env。這台機器（H100、driver 535 / CUDA 12.2）上的 env 分三層�
 | `Mistral3-fa` | + 自行編譯的 flash-attn 2.8.3.post1 | `scripts/setup_flash_attn_env.sh` |
 | `Mistral3-fa-vllm` | + vllm 0.28.0+cu129（訓練與推論都用這個） | `scripts/setup_vllm_env.sh` |
 
-下面四個階段的指令都用 `Mistral3-fa-vllm`。在沒有 flash_attn 的 env 執行訓練時請加
-`--attn_implementation sdpa`。
+下面四個階段的指令都用 `Mistral3-fa-vllm`。訓練預設 `--attn_implementation flash_attention_2`，
+在沒有 flash_attn 的 env 執行訓練時請加 `--attn_implementation sdpa`（實測慢約 1.9 倍）。
+
+```bash
+PY=/root/miniconda3/envs/Mistral3-fa-vllm/bin/python
+```
 
 ## 手動四階段流程
 
-### 1/4 訓練（只存 LoRA adapter，不做內建合併）
+### 1/4 訓練（雙卡，只存 LoRA adapter）
 
 ```bash
-/root/miniconda3/envs/Mistral3-fa-vllm/bin/python \
-  scripts/fine_tuning_vlm_trl_traffic_tune_ministral_fastmerge.py \
-  --model_id Ministral-3-8B-Instruct-2512 \
+CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True WANDB_MODE=offline \
+  $PY scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py \
   --max_steps 10 \
   --data_root data/collision_diagram/synthetic_tune_v2 \
-  --skip_merge \
   --new_run
 ```
 
-- `--skip_merge`：訓練完只存 LoRA adapter（`trainer.save_model()` 存到 output_dir），不執行
-  腳本內建的合併（見 `utils/fine_tuning/config.py` 的 `--skip_merge` 說明）。
+- **Mistral-Small 必須從外部設 `CUDA_VISIBLE_DEVICES=0,1`**，單卡放不下。使用 GPU0 前先 `nvidia-smi`
+  確認沒有被外部程序佔用（曾觀察到被本容器看不到的程序佔走約 47GB）。
+- 這支腳本只支援 `Mistral-Small-3.2-24B-Instruct-2506`，訓練完用 `trainer.save_model()` 只存 adapter
+  與 processor，不做內建合併。
 - `--new_run`：開一輪全新訓練，不接續舊 run 的 checkpoint。
 - 訓練 log 開頭會印 `[run-index] ... 本次使用 run{N}`，記下這個 N——下面步驟都要用到
-  `Output/Ministral-3-8B-Instruct-2512-lora-run{N}` 這個目錄（以下用 `RUN_DIR` 代稱）。
+  `Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run{N}` 這個目錄（以下用 `RUN_DIR` 代稱）。
+- 只跑 10 step 驗證的是流程，不是模型效果；正式長時間訓練請改用 `scripts/run_formal_finetune.sh`。
 
 ```bash
-RUN_DIR=Output/Ministral-3-8B-Instruct-2512-lora-run2   # 換成你實際看到的 run 編號
+RUN_DIR=Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run2   # 換成你實際看到的 run 編號
 ```
 
-### 2/4 合併（`scripts/merge_lora_checkpoint.py`）
+### 2/4 合併（`scripts/merge_lora_mistral_small.py`，只用 CPU，約 7 分鐘）
 
 ```bash
-/root/miniconda3/envs/Mistral3-fa-vllm/bin/python \
-  scripts/merge_lora_checkpoint.py \
+CUDA_VISIBLE_DEVICES="" $PY scripts/merge_lora_mistral_small.py \
   --checkpoint "$RUN_DIR" \
-  --merged_path "$RUN_DIR/merged" \
-  --model_dir models/Ministral-3-8B-Instruct-2512
+  --merged_path "$RUN_DIR/merged"
 ```
 
-- `--checkpoint` 指向 1/4 步驟存好 LoRA adapter 的目錄（需含 `adapter_config.json`）。
-- `--model_dir` **務必明確指定**：這支腳本是通用的合併工具，可以合併不同模型家族
-  （Mistral-Small/GLM/Ministral）的 checkpoint，`--model_dir` 預設值不一定對應你要合併的
-  模型，記得換成對應的底模型目錄。
-- 合併邏輯跟 `fine_tuning_vlm_trl_traffic_tune_ministral_fastmerge.py` 第 9 節一致：在記憶體
-  裡用 `revert_weight_conversion()` 修正 FP8 round-trip 後一次存檔，log 會印
-  `[merge] 用 revert_weight_conversion() 取得正確命名的 state_dict...`。
+- `--checkpoint` 指向存好 LoRA adapter 的目錄（需含 `adapter_config.json`），可以是 run 目錄本身，
+  也可以是中途存下的 `checkpoint-N`。
+- `--model_dir` 預設 `models/Mistral-Small-3.2-24B-Instruct-2506`；Mistral-Small 是 bf16 權重，
+  不需要處理 FP8。
 
 ### 3/4 啟動 vLLM serve
 
 ```bash
-VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=0 \
+VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 \
   /root/miniconda3/envs/Mistral3-fa-vllm/bin/vllm serve "$RUN_DIR/merged" \
-  --tokenizer_mode mistral \
-  --config_format mistral \
-  --load_format auto \
+  --tokenizer "$RUN_DIR/merged" \
+  --load_format safetensors \
   --enable-auto-tool-choice \
   --tool-call-parser mistral \
   --max-model-len 8192 \
@@ -105,7 +86,7 @@ curl http://localhost:8000/health
 就緒後另開終端機執行：
 
 ```bash
-/root/miniconda3/envs/Mistral3-fa-vllm/bin/python - <<'EOF'
+$PY - <<'PYEOF'
 import base64, json
 from io import BytesIO
 from openai import OpenAI
@@ -136,7 +117,7 @@ resp = client.chat.completions.create(
 )
 print("--- Ground truth ---\n", sample["text"])
 print("--- 模型輸出 ---\n", resp.choices[0].message.content)
-EOF
+PYEOF
 ```
 
 只訓練 10 step 幾乎學不到任何東西，模型輸出不會接近 ground truth 的格式——這個測試驗證的是
@@ -144,7 +125,7 @@ EOF
 
 ## 收尾
 
-手動測完後記得清理，避免佔用 GPU 與磁碟（merged 模型 bf16 全精度約 16GB）：
+手動測完後記得清理，避免佔用 GPU 與磁碟：
 
 ```bash
 # 關掉 vLLM（Ctrl+C 那個終端機，或找 PID kill 整個 process group）
@@ -156,26 +137,24 @@ rm -rf "$RUN_DIR"
 
 ## 相關檔案
 
-- `scripts/smoke_test_train_merge_vllm.sh` — 把以上四階段自動串起來的煙霧測試腳本
-- `scripts/fine_tuning_vlm_trl_traffic_tune_ministral_fastmerge.py` — 訓練腳本（第 9 節是
-  內建合併邏輯，`--skip_merge` 可跳過）
-- `scripts/merge_lora_checkpoint.py` — 獨立合併腳本，用於手動合併任意 LoRA checkpoint（例如
-  訓練中途中斷、只存到 `checkpoint-N` 而非最終路徑時）
+- `scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py` — 訓練腳本（只存 LoRA adapter）
+- `scripts/merge_lora_mistral_small.py` — 合併腳本，可指定 run 目錄或任一 `checkpoint-N`
+- `scripts/run_formal_finetune.sh` — 正式長時間訓練的自動重啟監督迴圈
 
 ---
 
-# 手動測試：Demo 網頁（`demo/inference_server.py`）頁面跳轉
+# 手動測試：Demo 網頁（`Demo/inference_server.py`）頁面跳轉
 
-這份記錄 `demo/inference_server.py` 這個 FastAPI demo 網頁的手動測試方式，涵蓋首頁上傳 →
+這份記錄 `Demo/inference_server.py` 這個 FastAPI demo 網頁的手動測試方式，涵蓋首頁上傳 →
 `/analyze` → 結果頁這條頁面跳轉路徑的輸入輸出介面。
 
-所有指令都假設在 repo root（`transport_vlm_refactor/`）底下執行——demo 腳本要用
-`demo/inference_server.py` 這個相對路徑啟動，**不要** `cd` 進 `demo/` 目錄再執行，否則下面
+所有指令都假設在 repo root 底下執行——demo 腳本要用
+`Demo/inference_server.py` 這個相對路徑啟動，**不要** `cd` 進 `Demo/` 目錄再執行，否則下面
 的 curl 範例裡的相對圖片路徑（如 `images/drawio.png`）會對不上。
 
 ## 前提
 
-`demo/inference_server.py` 在 import 階段就會呼叫 `client.models.list()`
+`Demo/inference_server.py` 在 import 階段就會呼叫 `client.models.list()`
 （`http://localhost:8000/v1`），所以要先確定有一個 OpenAI 相容的模型服務（例如 vLLM）已經在
 本機 8000 port 上跑：
 
@@ -188,8 +167,7 @@ curl -s http://localhost:8000/v1/models
 ## 1. 啟動 demo server
 
 ```bash
-cd /mnt/moris/Dcoker_Project/Project/transport_vlm_refactor
-python demo/inference_server.py --port 8090
+python Demo/inference_server.py --port 8090
 ```
 
 看到 `Uvicorn running on http://0.0.0.0:8090` 就代表啟動成功。
@@ -233,8 +211,8 @@ pkill -f "inference_server.py --port 8090"
 
 ## 相關檔案
 
-- `demo/inference_server.py` — FastAPI demo 主程式，路由：`GET /`、`POST /analyze`、
+- `Demo/inference_server.py` — FastAPI demo 主程式，路由：`GET /`、`POST /analyze`、
   `GET /result/{result_id}`、`POST /vlm_response`、`POST /multi_response`
-- `demo/html_templates.py` — 首頁與結果頁的 HTML 模板（`HOME_PAGE_TEMPLATE` /
+- `Demo/html_templates.py` — 首頁與結果頁的 HTML 模板（`HOME_PAGE_TEMPLATE` /
   `RESULT_PAGE_TEMPLATE`）
-- `demo/test_API.py` — 呼叫正式站部署網址的簡易測試腳本（打的是遠端 API，非本機 demo server）
+- `Demo/test_API.py` — 呼叫正式站部署網址的簡易測試腳本（打的是遠端 API，非本機 demo server）

@@ -4,53 +4,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-This project fine-tunes a Mistral3-family VLM (Ministral-3-8B-Instruct-2512 / Mistral-Small-3.2-24B, `Mistral3ForConditionalGeneration` + `PixtralProcessor`) with LoRA/SFT (TRL). The training data is synthetic Taiwanese traffic-collision diagrams (肇事碰撞構圖). The model learns to identify collision type, direction, and casualties in Traditional Chinese. Merged models are served with vLLM (an OpenAI-compatible API) and shown through a FastAPI demo.
+This project fine-tunes the Mistral-Small-3.2-24B-Instruct-2506 VLM (`Mistral3ForConditionalGeneration` + `PixtralProcessor`, bf16 weights) with LoRA/SFT (TRL). The training data is synthetic Taiwanese traffic-collision diagrams (肇事碰撞構圖). The model learns to identify collision type, direction, and casualties in Traditional Chinese. Merged models are served with vLLM (an OpenAI-compatible API) and shown through a FastAPI demo.
 
 Code comments, docstrings, logs, and docs are written in Traditional Chinese. Match that when editing. Comments are long and explain *why*, often citing incidents that were reproduced on this machine. Keep them when refactoring.
 
-The repo is not a git repo, and the root `README.md` is an unedited GitLab template. The real usage docs are in `markdown/USAGE.md`.
+`README.md` is the project overview. Step-by-step usage is in `markdown/USAGE.md`, and the H100 environment/training handoff notes are in `markdown/HANDOFF-2026-10-07-H100訓練.md`.
 
 ## Environment
 
-- Use the conda env at `/root/miniconda3/envs/fine_tune_vlm/bin/python` (Python 3.10). The vLLM CLI is in that env's `bin/vllm`. The pinned stack (transformers 5.x, trl, peft, vllm) is in `requirements.txt`. `requirements-fine_tune_vlm.txt` is a raw `pip freeze` snapshot kept for reference and is not meant to be installed.
+- Use the conda env at `/root/miniconda3/envs/Mistral3-fa-vllm/bin/python` (Python 3.10, torch 2.13.0+cu126, flash-attn 2.8.3.post1, vllm 0.28.0+cu129). It is used for both training and inference. The vLLM CLI is in that env's `bin/vllm`. It was built in layers (`Mistral3` → `Mistral3-fa` → `Mistral3-fa-vllm`) by `scripts/setup_flash_attn_env.sh` and `scripts/setup_vllm_env.sh`; the machine's driver 535 only supports CUDA 12.2, so CUDA 13 builds of torch/vllm cannot see the GPU.
+- The curated package list is `requirements.txt`. `requirements-fine_tune_vlm.txt` and `requirements-Mistral3-fa-vllm.txt` are raw `pip freeze` snapshots kept for reference and are not meant to be installed.
 - Run all scripts from the repo root. Scripts in `scripts/` add the repo root to `sys.path` themselves, so `utils` imports resolve.
 - Base models live under `models/<model_id>`. Training runs write to `Output/<model_id>-lora-run<N>/`.
-- `configs/secrets.yaml` holds `wandb_api_key` and must never be committed or hard-coded. Copy it from `secrets.yaml.example`. For local runs, set `WANDB_MODE=offline` and put any string as the key.
-- No test suite or linter is configured. Verification is the smoke test below.
+- Mistral-Small needs both GPUs: set `CUDA_VISIBLE_DEVICES=0,1` from outside. Check `nvidia-smi` before using GPU0; an external process invisible to this container has occupied it before.
+- `configs/secrets.yaml` holds `wandb_api_key`, is in `.gitignore`, and must never be committed or hard-coded. Copy it from `secrets.yaml.example`. For local runs, set `WANDB_MODE=offline` and put any string as the key.
+- No test suite or linter is configured. Verification is the manual train → merge → vLLM → inference flow in `markdown/USAGE.md`.
 
 ## Common commands
 
 ```bash
-PY=/root/miniconda3/envs/fine_tune_vlm/bin/python
+PY=/root/miniconda3/envs/Mistral3-fa-vllm/bin/python
 
 # Generate the synthetic dataset (pick a generator version; see --help)
 $PY scripts/make_data.py --help
 
-# End-to-end smoke test: train 10 steps → merge → vllm serve → test inference (cleans up Output/ afterwards)
-./scripts/smoke_test_train_merge_vllm.sh
-SMOKE_TEST_KEEP_OUTPUT=1 ./scripts/smoke_test_train_merge_vllm.sh   # keep the run dir
+# Short training run (adapter only)
+CUDA_VISIBLE_DEVICES=0,1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True WANDB_MODE=offline \
+  $PY scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py --max_steps 10 --new_run
 
-# Formal training under the auto-restart supervisor loop (log: formal_finetune_ministral.log)
-./scripts/run_formal_finetune.sh --model_id Ministral-3-8B-Instruct-2512 --num_train_epochs 10 \
-  --eval_strategy steps --eval_steps 100 --data_root data/collision_diagram/synthetic_tune_v2 --new_run
+# Formal training under the auto-restart supervisor loop
+CUDA_VISIBLE_DEVICES=0,1 ./scripts/run_formal_finetune.sh --model_id Mistral-Small-3.2-24B-Instruct-2506 --new_run
 
 # Monitor a running training job (process, GPU, disk, live tqdm progress via /proc/<pid>/fd)
 ./scripts/monitor_progress.sh -w
 
-# Merge any LoRA checkpoint by hand. Always pass --model_dir explicitly; its default may be a different model family.
-$PY scripts/merge_lora_checkpoint.py --checkpoint "$RUN_DIR" --merged_path "$RUN_DIR/merged" \
-  --model_dir models/Ministral-3-8B-Instruct-2512
+# Merge a LoRA run dir or checkpoint-N (CPU only, ~7 min)
+CUDA_VISIBLE_DEVICES="" $PY scripts/merge_lora_mistral_small.py --checkpoint "$RUN_DIR" --merged_path "$RUN_DIR/merged"
+
+# Serve the merged model
+VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 vllm serve "$RUN_DIR/merged" --tokenizer "$RUN_DIR/merged" \
+  --load_format safetensors --enable-auto-tool-choice --tool-call-parser mistral --max-model-len 8192 --port 8000
 ```
 
-`markdown/USAGE.md` has the step-by-step manual version of the smoke test (including the exact `vllm serve` flags: `--tokenizer_mode mistral --config_format mistral --tool-call-parser mistral`, `VLLM_USE_FLASHINFER_SAMPLER=0`) and the demo-server curl tests.
+`markdown/USAGE.md` has the full manual flow (including the inference test script) and the demo-server curl tests.
 
 ## Architecture
 
-**Training scripts** (`scripts/fine_tuning_vlm_trl_traffic_tune_ministral_*.py`): each is a long, top-level, numbered-section script (`# 0. 命令列參數` … `# 9. 合併`).
-- `_fastmerge.py` and `_simplified.py` are deliberate independent copies that behave identically. `_simplified.py` only refactors section 9 into named functions. Maintain them separately: do not deduplicate them or "sync" one into the other unless asked.
-- CLI args and the `TrainingConfig` defaults are in `utils/fine_tuning/config.py`. The default `--model_id` is not Ministral, so pass `--model_id` explicitly.
+**Training script** (`scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py`): a long, top-level, numbered-section script. It only accepts `--model_id Mistral-Small-3.2-24B-Instruct-2506` and saves only the LoRA adapter + processor (`trainer.save_model()`); merging is done separately by `scripts/merge_lora_mistral_small.py`. `scripts/fine_tuning_vlm_trl_traffic_tune_v2.py` is the earlier single-file script it was simplified from (date-based output dirs, no run management).
+- CLI args and the `TrainingConfig` defaults are in `utils/fine_tuning/config.py`. The default `--model_id` is Mistral-Small. Some help text and choices there still mention the removed Ministral scripts; leave them unless asked.
 - `--resource_mode auto|manual` decides whether batch size, grad accumulation, and workers come from `utils/fine_tuning/resources.py` auto-detection or from CLI flags.
-- `--skip_merge` saves only the adapter.
+- `--attn_implementation` defaults to `flash_attention_2`; `sdpa` is the fallback for envs without flash-attn (measured ~1.9× slower, same loss curve).
 
 **Run management** (`utils/fine_tuning/run_management.py`): output directories are named by run index, not by date.
 - Without `--new_run`, a run resumes the highest-numbered run from its last *complete* checkpoint. Half-written checkpoints are skipped.
@@ -58,26 +61,25 @@ $PY scripts/merge_lora_checkpoint.py --checkpoint "$RUN_DIR" --merged_path "$RUN
 - This is what lets `run_formal_finetune.sh` restart after crashes. That script exists because the GPU driver has caused random SIGSEGV/SIGKILL and hangs. It also kills the job after a stall timeout and stops after `MAX_CONSECUTIVE_FAILURES`.
 
 **Known pitfalls encoded in the code (do not "simplify" away):**
-- The Ministral checkpoint on disk is FP8. Load it with `FineGrainedFP8Config(dequantize=True)` so it becomes bf16, and never stack bitsandbytes on top. At merge time the config must match the base model's `weight_block_size` (None for Ministral). If it doesn't, transformers silently loads raw FP8 weights and the merged model outputs garbage in vLLM.
-- Merge path: `save_pretrained()` re-quantizes to FP8 through `revert_weight_conversion()`. The fastmerge variant calls `revert_weight_conversion()` itself, fixes the state_dict in memory, and writes once. When copying tokenizer files to `merged/`, never copy the base model's `config.json`. It still carries the FP8 `quantization_config` and would overwrite the clean bf16 config.
-- `torch.multiprocessing` sharing strategy is `file_system` because `/dev/shm` is small in the container. The script asserts the start method is `fork`, because `spawn` would make every DataLoader worker reload the model, and this machine has no swap.
-- Attention is `sdpa` (no nvcc available, so no flash-attn). transformers 5.x renamed `torch_dtype` to `dtype` and dropped `warmup_ratio`, which is now converted to `warmup_steps`.
+- `torch.multiprocessing` sharing strategy is `file_system` because `/dev/shm` is small in the container. The start method must be `fork`, because `spawn` would make every DataLoader worker reload the model, and this machine has no swap.
+- transformers 5.x renamed `torch_dtype` to `dtype` and dropped `warmup_ratio`, which is now converted to `warmup_steps`.
 - `device_map="auto"` can silently offload layers to the CPU. The script checks for this.
 
 **Data generation** (`utils/ds_utils/`, entry point `scripts/make_data.py`):
 - `CollisionDiagramBase` (`base.py`) handles base maps, collision types, and coordinates. `rendering.py` composites icons and `domain/` holds the traffic rules and geometry.
 - `generators/` has one subclass per dataset format version: `CollisionDescriptionV1/V2/V3`, `CollisionDiagramMix`, and `CollisionDiagramTuneV1/V2`. They are registered in `GENERATOR_REGISTRY` in `make_data.py`, and `generators/generators.md` documents them.
 - `facade.CollisionDiagram` recombines them for backward compatibility.
-- Output goes to `data/collision_diagram/<dataset>/{train,test}/*.jsonl` with `image`/`text` records. `make_simple_data.py` is a sibling variant.
+- Output goes to `data/collision_diagram/synthetic_<dataset_tag>/{train,test}/*.jsonl` with `image`/`text` records. `make_simple_data.py` is a sibling variant.
 
 **Other utils:**
 - `utils/accuracy_utils.py` scores model output against ground truth.
 - `utils/report_utils.py` and `utils/gen_utils.py` cover reporting and generation helpers.
 - `utils/vl_utils.py` holds the VLM input helpers.
 
-**Demo** (`Demo/`; the docs call it `demo/`):
+**Demo** (`Demo/`):
 - `inference_server.py` is a FastAPI app with the routes `GET /`, `POST /analyze` → 303 to `/result/{id}`, `/vlm_response`, and `/multi_response`.
-- The current version does not call the VLM live. It matches uploaded images by pHash (`image_lookup.py`) against precomputed results in `Demo/test.jsonl`, with a simulated delay.
-- Start it with `python Demo/inference_server.py --port 8090` from the repo root. `demo_ori/` is the earlier version, which needs vLLM running on `:8000`.
+- It calls the vLLM server at `http://localhost:8000/v1` live and calls `client.models.list()` at import time, so vLLM must be running before it starts.
+- Start it with `python Demo/inference_server.py --port 8090` from the repo root. `test_API.py` calls the remote production deployment, not the local server.
+- `start.sh` is the container entrypoint: it starts `vllm serve` on a merged model, waits for `/health`, then starts the frontend with uvicorn (`--root-path` for the ingress prefix). Its paths are hard-coded for the deployment machine.
 
-`Progress/` holds progress reports and `openspec/` is an unconfigured OpenSpec setup. `notebooks/` contains inference experiments.
+`notebooks/` contains inference experiments.
