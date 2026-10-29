@@ -17,7 +17,7 @@ Code comments, docstrings, logs, and docs are written in Traditional Chinese. Ma
 - Run all scripts from the repo root. Scripts in `scripts/` add the repo root to `sys.path` themselves, so `utils` imports resolve.
 - Base models live under `models/<model_id>`. Training runs write to `Output/<model_id>-lora-run<N>/`.
 - Mistral-Small needs both GPUs: set `CUDA_VISIBLE_DEVICES=0,1` from outside. Check `nvidia-smi` before using GPU0; an external process invisible to this container has occupied it before.
-- `configs/secrets.yaml` holds `wandb_api_key`, is in `.gitignore`, and must never be committed or hard-coded. Copy it from `secrets.yaml.example`. For local runs, set `WANDB_MODE=offline` and put any string as the key.
+- `configs/secrets.yaml` holds `wandb_api_key` and `hf_token` (read via `utils/fine_tuning/secrets.py`), is in `.gitignore`, and must never be committed or hard-coded. Copy it from `secrets.yaml.example`. For local runs, set `WANDB_MODE=offline` and put any string as the key.
 - No test suite or linter is configured. Verification is the manual train → merge → vLLM → inference flow in `markdown/USAGE.md`.
 
 ## Common commands

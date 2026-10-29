@@ -5,7 +5,11 @@ from huggingface_hub import login, snapshot_download
 # =========================================================
 # ========== Hugging Face 連線設定 ==========
 # =========================================================
-TOKEN = "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"
+# token 改從 configs/secrets.yaml 的 hf_token 讀取（原本寫死在這裡、跟著 commit 進 git 歷史）。
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.fine_tuning.secrets import load_hf_token
+TOKEN = load_hf_token()
 
 # HuggingFace 登入
 login(token=TOKEN)

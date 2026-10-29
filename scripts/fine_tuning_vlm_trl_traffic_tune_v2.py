@@ -300,8 +300,10 @@ collated_data = collate_fn(collate_sample)
 
 
 import wandb
-WANDB_API_KEY = "d3cb844fe4a7a49d363c2d13ea842450d335c732"
-wandb.login(key=WANDB_API_KEY)
+# 金鑰改從 configs/secrets.yaml 讀取（原本寫死在這裡、跟著 commit 進 git 歷史）。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.fine_tuning.secrets import load_wandb_api_key
+wandb.login(key=load_wandb_api_key())
 
 
 trainer = SFTTrainer(

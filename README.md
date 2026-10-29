@@ -67,10 +67,10 @@ transport_vlm/
 `requirements-*.txt` 中的 freeze 快照只用來參考版本組合，不是拿來 `pip install -r` 的。
 上面這兩支 setup 腳本的檔頭說明了為什麼不能直接 `pip install vllm`（CUDA 13 build 在 driver 535 上用不了 GPU）。
 
-### wandb 金鑰
+### 金鑰（wandb / HuggingFace）
 
 ```bash
-cp configs/secrets.yaml.example configs/secrets.yaml   # 填入 wandb_api_key
+cp configs/secrets.yaml.example configs/secrets.yaml   # 填入 wandb_api_key，下載模型時再填 hf_token
 ```
 
 `configs/secrets.yaml` 已列在 `.gitignore`，不要 commit。本機測試可以設 `WANDB_MODE=offline`，key 隨便填一個字串就好。
