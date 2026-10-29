@@ -171,7 +171,7 @@ HOME_PAGE_TEMPLATE = """
         <h1>🚦 交通事故碰撞構圖分析</h1>
         <p class="subtitle">上傳事故圖片進行 AI 智能分析</p>
         
-        <form id="uploadForm" action="analyze" method="post" enctype="multipart/form-data">
+        <form id="uploadForm" action="{analyze_url}" method="post" enctype="multipart/form-data">
             <div class="form-group">
                 <label for="prompt">📝 分析提示詞</label>
                 <textarea 
@@ -499,7 +499,7 @@ RESULT_PAGE_TEMPLATE = """
             </div>
         </div>
         <div class="actions">             
-            <a href="/" class="btn btn-secondary">🔄 分析新圖片</a>
+            <a href="{home_url}" class="btn btn-secondary">🔄 分析新圖片</a>
             <button onclick="window.print()" class="btn btn-secondary">🖨️ 列印結果</button>
             <button onclick="downloadResult()" class="btn btn-secondary">💾 下載報告</button>
         </div>

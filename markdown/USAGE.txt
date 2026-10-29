@@ -3,19 +3,29 @@ CUDA_VISIBLE_DEVICES=0,1  python ./scripts/fine_tuning_vlm_trl_traffic_tune_mist
 
 # 合併
 CUDA_VISIBLE_DEVICES="" python scripts/merge_lora_mistral_small.py \
-  --checkpoint Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/checkpoint-100 \
-  --merged_path Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-100
+  --checkpoint Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/checkpoint-9375 \
+  --merged_path Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-9375  
+
+CUDA_VISIBLE_DEVICES="" python scripts/merge_lora_mistral_small.py \
+  --checkpoint Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/checkpoint-18800 \
+  --merged_path Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-18800  
 
 # 正式訓練
-./scripts/run_formal_finetune.sh --model_id Mistral-Small-3.2-24B-Instruct-2506 --num_train_epochs 5 \
+./scripts/run_formal_finetune.sh --model_id Mistral-Small-3.2-24B-Instruct-2506 --num_train_epochs 15 \
 --weight_decay 0.01 --eval_strategy steps --eval_steps 100  
 
 #
-VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 vllm serve Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-100 \
-  --tokenizer Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-100 \
+VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 vllm serve Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-9375 \
+  --tokenizer Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-9375 \
   --load_format safetensors \
   --tool-call-parser mistral \
-  --enable-auto-tool-choice
+  --enable-auto-tool-choice  
+
+VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 vllm serve Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-18800 \
+  --tokenizer Output/Mistral-Small-3.2-24B-Instruct-2506-lora-run1/merged-18800 \
+  --load_format safetensors \
+  --tool-call-parser mistral \
+  --enable-auto-tool-choice    
 
 
 
@@ -27,3 +37,20 @@ VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=0 \
   --enable-auto-tool-choice \
   --tool-call-parser mistral \
   --max-model-len 8192  
+
+#############################################################
+#
+# To activate this environment, use
+#
+#     $ conda activate /mnt/moris/conda_envs/Mistral
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+
+WARNING conda.conda_pypi.main:notify_externally_managed_future(156): 
+  Did you know? You can install many PyPI packages with conda
+  using the conda-pypi beta. Get started:
+    https://docs.conda.io/projects/conda/en/stable/new-features.html
+    
+#############################################################

@@ -1,28 +1,28 @@
-from fastapi import FastAPI, Query, File, UploadFile, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+#from fastapi import FastAPI, Query, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, Query, File, UploadFile, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from typing import Optional
 import base64
 import argparse, uvicorn
-import random
-from pathlib import Path
+from io import StringIO
+from openai import OpenAI
 import uuid
 from datetime import datetime
 from html_templates import HOME_PAGE_TEMPLATE, RESULT_PAGE_TEMPLATE
 import time
 import webbrowser
+import asyncio
 from threading import Lock
-
-from image_lookup import build_index, find_best_match, DEFAULT_THRESHOLD
 
 app = FastAPI(title="Chat Completions API")
 
 # --------------------------------------------------------------------------- #
-# 歷史推論結果比對索引 (pHash) —— 取代即時 VLM 呼叫
+# OpenAI client Configuration
 # --------------------------------------------------------------------------- #
-JSONL_PATH = Path(__file__).parent / "test.jsonl"
-SIMILARITY_THRESHOLD = DEFAULT_THRESHOLD
-match_index = build_index(str(JSONL_PATH))
-SIMULATED_PROCESSING_DELAY_RANGE = (2.0, 3.0)  # 模擬 VLM 推理耗時，讓比對結果不會秒回
+API_BASE_URL = "http://localhost:8000/v1"
+API_KEY = "EMPTY"
+client = OpenAI(base_url=API_BASE_URL,api_key=API_KEY)
+model = client.models.list().data[0].id
 # --------------------------------------------------------------------------- #
 # 用於暫存結果的字典 (生產環境建議使用 Redis 或資料庫)
 class ResultCache:
@@ -66,15 +66,26 @@ class ResultCache:
 # 初始化結果快取
 results_cache = ResultCache()
 
+def _app_path(request: Request, name: str, **path_params) -> str:
+    """產生帶 root_path 前綴、以 / 開頭的站內路徑（不含 scheme/host）。
 
-@app.get("/", response_class=HTMLResponse)
-async def main():
-    results_cache.clear()
-    return HTMLResponse(content=HOME_PAGE_TEMPLATE)
+    部署時 start.sh 以 `uvicorn --root-path <ingress 前綴>` 啟動，前綴存在
+    scope["root_path"]。這裡刻意不用 request.url_for() 的絕對 URL：它的
+    scheme/host 取自 X-Forwarded-Proto / Host header，ingress 沒正確轉發時
+    會產生 http:// 或內部 host 的網址（https 頁面上的表單 action 會被當成
+    mixed content 擋掉）。只給路徑就讓瀏覽器沿用目前頁面的 origin。
+    原本 analyze 的 303 寫死 f"/result/{id}"，前綴遺失導致 ingress 404。
+    """
+    root_path = request.scope.get("root_path", "").rstrip("/")
+    return root_path + app.url_path_for(name, **path_params)
+
+def encode_image(image_bytes: bytes) -> str:
+    """將上傳圖片轉換成 base64 格式字串"""
+    return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
 
 
-@app.post("/analyze")
-async def analyze(
+@app.post("/vlm_response")
+async def vlm_response(
     prompt: str =  Form("你是一位專精台灣交通工程與交通安全的專家，請用繁體中文回答我的專業問題。請基於提供的肇事碰撞構圖，對路口進行分析並辨識肇事型態。", 
                             description="詢問碰撞構圖VLM助理問題。"),
     file: Optional[UploadFile] = File(..., description="上傳的圖片檔案") ,
@@ -82,34 +93,252 @@ async def analyze(
     top_p: float = Form(0.9, description="控制生成的隨機性，通常設置值在0到1之間，數值越小，生成的內容越保守且可預測；數值越大，生成的內容越具有創造性與隨機性"),
     max_tokens: int = Form(1000, description="設置生成過程中最多生成Token的數量。")
 ):
-    """處理分析請求並生成結果頁面（以 pHash 比對 test.jsonl 歷史資料，不呼叫即時 VLM）"""
+    """
+    碰撞構圖VLM API接口
+    
+    支援:
+    - 文字輸入
+    - 圖片上傳(可選)
+    - 自訂temperature和max_tokens
+    """
+    
+    try:
+        image_bytes = await file.read()
+        print(f"接收圖片大小: {len(image_bytes)} bytes")
+        print(f"圖片類型: {file.content_type}")
+        
+        # 轉換為 base64
+        image_data = encode_image(image_bytes)    
 
+        start_time = time.time()   
+
+        stream = client.chat.completions.create(
+                model=client.models.list().data[0].id,
+                messages= [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text":  prompt},
+                        {"type": "image_url", "image_url": {"url": image_data}},
+                    ],
+                },
+                ],
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,             
+                stream=True
+            )
+        f = StringIO()
+        for chunk in stream:
+            f.write(chunk.choices[0].delta.content)
+            print(chunk.choices[0].delta.content, end="")
+        print()
+
+        # 計算推理時間
+        inference_time = time.time() - start_time
+        print(f"\n推理時間: {inference_time:.2f} 秒")
+        
+        # 暫時返回模擬響應(請替換為實際的API調用)
+        result = {
+            "status": "success",
+            "response": f.getvalue(),
+            "inference_time": f"{inference_time:.2f}s",
+            "received_params": {
+                "model": model,  
+                "temperature": temperature,  
+                "max_tokens": max_tokens     
+            },
+            "image_info": {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size_bytes": len(image_bytes),
+            }
+        }        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        result = {
+            "status": "failed",       
+        }        
+        return JSONResponse(content=result)
+        raise HTTPException(status_code=500, detail=f"處理請求時發生錯誤: {str(e)}")
+
+
+def call_model(prompt, image_data, temperature, top_p, max_tokens):
+    """
+    封裝同步的 client.chat 呼叫
+    讓 asyncio 可以透過 run_in_executor 平行執行
+    """
+    response = client.chat.completions.create(
+            model=client.models.list().data[0].id,
+            messages= [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text":  prompt},
+                    {"type": "image_url", "image_url": {"url": image_data}},
+                ],
+            },
+            ],
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,             
+            stream=False
+        )
+
+    result = response.choices[0].message.content
+    return result
+
+@app.post("/multi_response")
+async def multi_response(
+    prompt: str =  Form("你是一位專精台灣交通工程與交通安全的專家，請用繁體中文回答我的專業問題。請基於提供的肇事碰撞構圖，對路口進行分析並辨識肇事型態。", 
+                            description="詢問碰撞構圖VLM助理問題。"),
+    file: Optional[UploadFile] = File(..., description="上傳的圖片檔案") ,
+    temperature: float = Form(0.15, description="控制模型生成的隨機性。較低的溫度（例如 0.2）會讓模型會選擇機率較高的詞；較高的溫度（例如 1.0 或以上）會讓生成的詞彙更具隨機性和多樣性。"),
+    top_p: float = Form(0.9, description="控制生成的隨機性，通常設置值在0到1之間，數值越小，生成的內容越保守且可預測；數值越大，生成的內容越具有創造性與隨機性"),
+    max_tokens: int = Form(1000, description="設置生成過程中最多生成Token的數量。"),
+    threads: int = Form(10, description="設置平行呼叫client.chat產生結果的數量")
+):
+    """
+    碰撞構圖VLM API接口
+    
+    支援:
+    - 文字輸入
+    - 圖片上傳(可選)
+    - 自訂temperature和max_tokens
+    """
+    
+    try:
+        image_bytes = await file.read()
+        print(f"接收圖片大小: {len(image_bytes)} bytes")
+        print(f"圖片類型: {file.content_type}")
+        
+        # 轉換為 base64
+        image_data = encode_image(image_bytes)    
+        start_time = time.time()         
+        loop = asyncio.get_event_loop()
+
+        # === 建立 threads 個平行任務 ===
+        tasks = [
+            loop.run_in_executor(
+                None,
+                call_model,
+                prompt,
+                image_data,
+                temperature,
+                top_p,
+                max_tokens
+            )
+            for _ in range(threads)
+        ]
+
+        # 等待所有平行任務完成
+        all_results = await asyncio.gather(*tasks)
+
+        # 計算推理時間
+        inference_time = time.time() - start_time
+        print(f"\n推理時間: {inference_time:.2f} 秒")
+        
+        # 暫時返回模擬響應(請替換為實際的API調用)
+        result = {
+            "status": "success",
+            "response": all_results,
+            "inference_time": f"{inference_time:.2f}s",
+            "received_params": {
+                "model": model,  
+                "temperature": temperature,  
+                "max_tokens": max_tokens     
+            },
+            "image_info": {
+                "filename": file.filename,
+                "content_type": file.content_type,
+                "size_bytes": len(image_bytes),
+            }
+        }        
+        return JSONResponse(content=result)
+        
+    except Exception as e:
+        result = {
+            "status": "failed",       
+        }        
+        return JSONResponse(content=result)
+
+#@app.get("/", response_class=HTMLResponse)
+#async def main():
+#    results_cache.clear()
+#    return HTMLResponse(content=HOME_PAGE_TEMPLATE)
+
+
+#@app.get("/", response_class=HTMLResponse)
+#async def main(request: Request):
+#    results_cache.clear()
+#    analyze_url = request.url_for("analyze")   # 會產生含前綴的完整網址
+#    return HTMLResponse(content=HOME_PAGE_TEMPLATE.format(analyze_url=analyze_url))
+
+
+@app.get("/", response_class=HTMLResponse)
+async def main(request: Request):
+    results_cache.clear()
+    analyze_url = _app_path(request, "analyze")   # 含 root_path 前綴的站內路徑
+    return HTMLResponse(content=HOME_PAGE_TEMPLATE.replace("{analyze_url}", analyze_url))
+
+@app.post("/analyze")
+async def analyze(
+    request: Request,
+    prompt: str =  Form("你是一位專精台灣交通工程與交通安全的專家，請用繁體中文回答我的專業問題。請基於提供的肇事碰撞構圖，對路口進行分析並辨識肇事型態。", 
+                            description="詢問碰撞構圖VLM助理問題。"),
+    file: Optional[UploadFile] = File(..., description="上傳的圖片檔案") ,
+    temperature: float = Form(0.15, description="控制模型生成的隨機性。較低的溫度（例如 0.2）會讓模型會選擇機率較高的詞；較高的溫度（例如 1.0 或以上）會讓生成的詞彙更具隨機性和多樣性。"),
+    top_p: float = Form(0.9, description="控制生成的隨機性，通常設置值在0到1之間，數值越小，生成的內容越保守且可預測；數值越大，生成的內容越具有創造性與隨機性"),
+    max_tokens: int = Form(1000, description="設置生成過程中最多生成Token的數量。")
+):
+    """處理分析請求並生成結果頁面"""
+    print(f"max_tokens: {max_tokens}")
+    print(f"top_p: {top_p}")
+    print(f"temperature: {temperature}")
+    print(f"file: {file.filename}")
+    
     try:
         # 讀取圖片
         image_bytes = await file.read()
         content_type = file.content_type or "image/png"
-
+        
         if content_type.startswith("image/"):
             image_data = f"data:{content_type};base64," + base64.b64encode(image_bytes).decode("utf-8")
         else:
             image_data = "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
 
         start_time = time.time()
-        time.sleep(random.uniform(*SIMULATED_PROCESSING_DELAY_RANGE))  # 模擬模型處理時間
-        match = find_best_match(image_bytes, match_index, SIMILARITY_THRESHOLD)
-        lookup_time = time.time() - start_time
-
-        if match is not None:
-            response_text = (
-                # f"✅ 比對來源: {match.record['image']}（雜湊距離: {match.distance}）\n\n"
-                f"{match.record['inference']}"
-            )
-        else:
-            response_text = (
-                f"⚠️ 查無此紀錄：找不到相似度足夠的歷史圖片"
-                f"（比對門檻: {SIMILARITY_THRESHOLD}, 資料庫: {len(match_index)} 筆）"
-            )
-
+        # 調用 VLM API
+        stream = client.chat.completions.create(
+            model=client.models.list().data[0].id,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_data}},
+                    ],
+                },
+            ],
+            temperature=temperature,
+            top_p=top_p,
+            max_tokens=max_tokens,
+            stream=True
+        )
+        
+        f = StringIO()
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                f.write(chunk.choices[0].delta.content)
+                print(chunk.choices[0].delta.content, end="")
+        print()
+        # 計算推理時間
+        inference_time = time.time() - start_time
+        print(f"\n推理時間: {inference_time:.2f} 秒")
+        
+        response_text = f.getvalue()
+        
         # 生成結果 ID 並暫存
         result_id = str(uuid.uuid4())
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -119,17 +348,16 @@ async def analyze(
             "filename": file.filename,
             "size": len(image_bytes),
             "response": response_text,
-            # "model": "本地圖片比對 (pHash)",
-            "model": "Mistral-Small-3.2-24B-Instruct-2506",
+            "model": model,
             "temperature": temperature,
             "top_p": top_p,
             "max_tokens": max_tokens,
             "timestamp": timestamp ,
             "timestamp_safe": timestamp.replace(":", "-"),  # 用於檔案名稱
-            "inference_time": f"{lookup_time:.3f}"  # 比對耗時
+            "inference_time": f"{inference_time:.2f}"  # 新增推理時間
         })
 
-        result_url = f"/result/{result_id}"
+        result_url = _app_path(request, "show_result", result_id=result_id)
         print(result_url)
 
         # time.sleep(0.5)
@@ -143,13 +371,15 @@ async def analyze(
 
 
 @app.get("/result/{result_id}", response_class=HTMLResponse)
-async def show_result(result_id: str):
+async def show_result(request: Request, result_id: str):
     """顯示分析結果頁面"""
     if not results_cache.exists(result_id):
         raise HTTPException(status_code=404, detail="結果不存在或已過期")
     
     data = results_cache.get(result_id)    
     
+    home_url = _app_path(request, "main")
+
     # 使用模板並填入資料
     html_content = RESULT_PAGE_TEMPLATE.format(
         timestamp=data['timestamp'],
@@ -162,7 +392,8 @@ async def show_result(result_id: str):
         top_p=data['top_p'],
         max_tokens=data['max_tokens'],
         timestamp_safe=data['timestamp_safe'],
-        inference_time=data['inference_time']  # 新增推理時間
+        inference_time=data['inference_time'],  # 新增推理時間
+        home_url=home_url
     )
 
     return HTMLResponse(content=html_content)
@@ -170,17 +401,25 @@ async def show_result(result_id: str):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0")
+    # parser.add_argument("--host", type=str, default="10.62.182.109")
     # parser.add_argument("--host", type=str, default="https://afspod-services.ai.foxconn.com/a4665b22-6514-463b-8dd3-28ccb78ae0b7/moris/")
+    # parser.add_argument("--host", type=str, default="https://afspod-services.ai.foxconn.com/")
+
     parser.add_argument("--port", type=int, default=8080)
-    # parser.add_argument("--port", type=int, default=10083)
+    # 反向代理（ingress）加上的外部 URL 前綴，例如 /a4665b22-.../traffic-collision-diagram；
+    # 與 start.sh 的 uvicorn --root-path 等價，本機直跑不需設定
+    # parser.add_argument("--root_path", type=str, default="/a4665b22-6514-463b-8dd3-28ccb78ae0b7/traffic-collision-diagram")
+    parser.add_argument("--root_path", type=str, default="")
 
     args = parser.parse_args()
-    uvicorn.run("inference_server:app", host=args.host, port=args.port, log_level="info", workers=1)
+    uvicorn.run("inference_server:app", host=args.host, port=args.port, root_path=args.root_path,
+                log_level="info", workers=1)
 
     # 使用方式:
     # python inference_server.py --port 8080
-    #
+    # 
     # 網頁介面: http://localhost:8080/
+    # API 端點: http://localhost:8080/vlm_response
     # Swagger 文件: http://localhost:8080/docs
 
     # https://afspod-services.ai.foxconn.com/a4665b22-6514-463b-8dd3-28ccb78ae0b7/moris/
