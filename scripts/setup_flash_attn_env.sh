@@ -27,7 +27,7 @@
 #
 # 編完後的使用方式：
 #   FINETUNE_PYTHON=$CONDA_ROOT/envs/$DST_ENV/bin/python ...（或直接用該 python 執行訓練腳本）
-#   訓練腳本 fine_tuning_vlm_trl_traffic_tune_ministral_simplified.py 預設
+#   訓練腳本 fine_tuning_vlm_trl_traffic_tune_mistral_small.py 預設
 #   --attn_implementation flash_attention_2；在沒有 flash_attn 的 env 執行請改傳 sdpa。
 
 set -euo pipefail

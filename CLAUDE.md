@@ -51,7 +51,8 @@ VLLM_USE_FLASHINFER_SAMPLER=0 CUDA_VISIBLE_DEVICES=1 vllm serve "$RUN_DIR/merged
 ## Architecture
 
 **Training script** (`scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py`): a long, top-level, numbered-section script. It only accepts `--model_id Mistral-Small-3.2-24B-Instruct-2506` and saves only the LoRA adapter + processor (`trainer.save_model()`); merging is done separately by `scripts/merge_lora_mistral_small.py`. `scripts/fine_tuning_vlm_trl_traffic_tune_v2.py` is the earlier single-file script it was simplified from (date-based output dirs, no run management).
-- CLI args and the `TrainingConfig` defaults are in `utils/fine_tuning/config.py`. The default `--model_id` is Mistral-Small. Some help text and choices there still mention the removed Ministral scripts; leave them unless asked.
+- CLI args and the `TrainingConfig` defaults are in `utils/fine_tuning/config.py`. The default `--model_id` is Mistral-Small. `--skip_merge` is kept for compatibility; the Mistral-Small script always saves only the adapter and just prints a notice.
+- `run_formal_finetune.sh` and `monitor_progress.sh` both default the log to `formal_finetune_mistral_small.log` (override with `FINETUNE_LOG`).
 - `--resource_mode auto|manual` decides whether batch size, grad accumulation, and workers come from `utils/fine_tuning/resources.py` auto-detection or from CLI flags.
 - `--attn_implementation` defaults to `flash_attention_2`; `sdpa` is the fallback for envs without flash-attn (measured ~1.9× slower, same loss curve).
 

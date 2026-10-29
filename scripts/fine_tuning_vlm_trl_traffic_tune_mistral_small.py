@@ -2,7 +2,7 @@
 # coding: utf-8
 """Mistral-Small-3.2-24B LoRA/SFT 訓練（雙卡 H100、flash_attention_2）。
 
-由 fine_tuning_vlm_trl_traffic_tune_ministral_simplified.py 照 v2.py 的寫法簡化而來：
+由早期的 Ministral-3-8B 訓練腳本（已移除）照 v2.py 的寫法簡化而來：
 只支援 Mistral-Small（bf16 權重，不需要 FP8 dequantize）、訓練完只存 LoRA adapter，
 合併改用 scripts/merge_lora_mistral_small.py。保留 run 編號與自動接續，
 run_formal_finetune.sh 才能在當機後從最後一份完整 checkpoint 接著跑。

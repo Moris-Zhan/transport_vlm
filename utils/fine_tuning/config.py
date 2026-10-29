@@ -24,11 +24,10 @@ class TrainingConfig:
     accumulation_steps: int = 2
     num_workers: int = 8
     new_run: bool = False
-    # 2026-09-10 新增：訓練完是否跳過腳本內建的「合併 LoRA 回底模型」那一節（目前只有
-    # fine_tuning_vlm_trl_traffic_tune_ministral_fastmerge.py 會讀這個欄位並據此跳過合併，
-    # 其餘腳本忽略）。給 smoke_test_train_merge_vllm.sh 這類外部流程用：訓練完只存 LoRA
-    # adapter 就結束，合併改交給獨立的 scripts/merge_lora_checkpoint.py 執行，避免兩邊各自
-    # merge 一次、重複讀寫整份底模型權重。
+    # 2026-09-10 新增：訓練完是否跳過腳本內建的「合併 LoRA 回底模型」那一節。當初是給已移除的
+    # Ministral 訓練腳本與煙霧測試用的；現行的 fine_tuning_vlm_trl_traffic_tune_mistral_small.py
+    # 本來就只存 LoRA adapter，帶這個參數只會印提示，合併一律交給獨立的
+    # scripts/merge_lora_mistral_small.py 執行，避免兩邊各自 merge 一次、重複讀寫整份底模型權重。
     skip_merge: bool = False
 
     # 原本寫死在腳本裡、這次改成可設定的欄位
@@ -96,7 +95,7 @@ class TrainingConfig:
     attn_implementation: str = "flash_attention_2"
 
     # 2026-10-07 新增：多卡訓練時放在 GPU0 的語言模型層數（其餘層平均分給其他卡）。None 表示
-    # 由腳本自行決定；目前只有 ministral_simplified.py 使用。
+    # 由腳本自行決定；目前只有 fine_tuning_vlm_trl_traffic_tune_mistral_small.py 使用（預設 24）。
     gpu0_layer_count: int | None = None
 
 
@@ -112,7 +111,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=[
             "Mistral-Small-3.2-24B-Instruct-2506",
             "GLM-4.1V-9B-Thinking",
-            "Ministral-3-8B-Instruct-2512",
         ],
         default=defaults.model_id,
         help="要微調的模型，對應本地 models/<model_id> 目錄",
@@ -157,9 +155,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--skip_merge",
         action="store_true",
         help=(
-            "訓練完只存 LoRA adapter，跳過腳本內建的合併回底模型那一節（目前只有 "
-            "fine_tuning_vlm_trl_traffic_tune_ministral_fastmerge.py 會讀這個參數，其餘腳本忽略）。"
-            "合併改用 scripts/merge_lora_checkpoint.py 對存好的 adapter 目錄手動執行。"
+            "訓練完只存 LoRA adapter，跳過腳本內建的合併回底模型那一節（現行的 "
+            "fine_tuning_vlm_trl_traffic_tune_mistral_small.py 本來就只存 adapter，帶這個參數只會印提示）。"
+            "合併改用 scripts/merge_lora_mistral_small.py 對存好的 adapter 目錄手動執行。"
         ),
     )
     parser.add_argument("--lora_alpha", type=int, default=defaults.lora_alpha, help="LoRA alpha")

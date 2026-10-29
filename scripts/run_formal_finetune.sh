@@ -1,7 +1,6 @@
 #!/bin/bash
 # run_formal_finetune.sh — 外部監督迴圈：這台機器已知會在隨機 step 數發生硬體/驅動層級的
-# SIGSEGV/SIGKILL 中斷（RTX 5090 / Blackwell 驅動，見 fine_tuning_vlm_trl_traffic_tune_ministral.py
-# 的說明），訓練腳本本身只負責「偵測既有 checkpoint、自動從那裡續跑」，實際「崩潰後重新啟動」
+# SIGSEGV/SIGKILL 中斷（最早在 RTX 5090 / Blackwell 驅動上發現），訓練腳本本身只負責「偵測既有 checkpoint、自動從那裡續跑」，實際「崩潰後重新啟動」
 # 這件事一直沒有腳本落地，都是手動重跑。這支腳本把重跑這件事自動化。
 #
 # 用法：
@@ -9,16 +8,15 @@
 #   例：./run_formal_finetune.sh --save_steps 100
 
 
-# ./scripts/run_formal_finetune.sh --model_id Ministral-3-8B-Instruct-2512 --num_train_epochs 10 \
-# --weight_decay 0.01 --eval_strategy steps --eval_steps 100 \
-# --data_root data/collision_diagram/synthetic_tune_simple_v2 \
-# --early_stopping_patience 10 --new_run
+# CUDA_VISIBLE_DEVICES=0,1 ./scripts/run_formal_finetune.sh --model_id Mistral-Small-3.2-24B-Instruct-2506 \
+# --num_train_epochs 5 --eval_strategy steps --eval_steps 100 \
+# --data_root data/collision_diagram/synthetic_tune_v2 --new_run
 
 #
 # 環境變數：
-#   FINETUNE_SCRIPT   要跑的訓練腳本，預設 fine_tuning_vlm_trl_traffic_tune_ministral.py
-#   FINETUNE_PYTHON   python 直譯器路徑，預設 /root/miniconda3/envs/fine_tune_vlm/bin/python
-#   FINETUNE_LOG      訓練日誌路徑，預設 formal_finetune_ministral.log（跟 monitor_finetune.sh
+#   FINETUNE_SCRIPT   要跑的訓練腳本，預設 scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py
+#   FINETUNE_PYTHON   python 直譯器路徑，預設 /root/miniconda3/envs/Mistral3-fa-vllm/bin/python
+#   FINETUNE_LOG      訓練日誌路徑，預設 formal_finetune_mistral_small.log（跟 monitor_finetune.sh
 #                     的 FINETUNE_LOG 用同一個變數名稱，方便兩支腳本指到同一個檔案；預設值改成
 #                     跟腳本名稱綁在一起，避免跟其他模型的正式訓練共用同一個 formal_finetune.log
 #                     混在一起，難以分辨是哪次訓練的紀錄——實測發生過）。
@@ -53,9 +51,9 @@
 # 和 FINETUNE_LOG），方便觀察訓練速度有沒有異常變慢（例如 GPU 被其他程序搶用）、或拿來估算
 # 剩餘時間。
 #
-# 若沒有傳任何參數給訓練腳本，預設會加上 --model_id Ministral-3-8B-Instruct-2512（因為
-# FINETUNE_SCRIPT 預設就是 Ministral 專用的腳本，而 --model_id 本身的預設值是共用設定裡的
-# GLM-4.1V-9B-Thinking，兩者對不上時腳本會直接報錯拒絕啟動——實測發生過：沒帶
+# 若沒有傳任何參數給訓練腳本，預設會加上 --model_id Mistral-Small-3.2-24B-Instruct-2506（因為
+# FINETUNE_SCRIPT 預設的訓練腳本只接受這個 model_id，跟共用設定的 --model_id 預設值對不上時
+# 腳本會直接報錯拒絕啟動——實測發生過：當時共用預設值是別的模型，沒帶
 # --model_id 直接跑，會在 3 秒內就失敗、被這支監督迴圈誤判成硬體隨機中斷，連續重試到
 # MAX_CONSECUTIVE_FAILURES 才停下來）。想跑其他模型，自己在後面帶完整的
 # --model_id <值> 就會蓋掉這個預設。
@@ -69,7 +67,7 @@ cd "$PROJECT_DIR"
 
 FINETUNE_SCRIPT="${FINETUNE_SCRIPT:-scripts/fine_tuning_vlm_trl_traffic_tune_mistral_small.py}"
 FINETUNE_PYTHON="${FINETUNE_PYTHON:-/root/miniconda3/envs/Mistral3-fa-vllm/bin/python}"
-FINETUNE_LOG="${FINETUNE_LOG:-formal_finetune_ministral.log}"
+FINETUNE_LOG="${FINETUNE_LOG:-formal_finetune_mistral_small.log}"
 MAX_CONSECUTIVE_FAILURES="${MAX_CONSECUTIVE_FAILURES:-20}"
 FAILURE_TAIL_LINES="${FAILURE_TAIL_LINES:-200}"
 STATUS_INTERVAL_SECONDS="${STATUS_INTERVAL_SECONDS:-300}"

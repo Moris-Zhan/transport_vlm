@@ -9,7 +9,7 @@
 #
 # 環境變數：
 #   FINETUNE_LOG   訓練程序沒在跑時，改從這個日誌讀最後一次的進度/loss，預設是專案根目錄的
-#                  formal_finetune_ministral.log（跟 run_formal_finetune.sh 的預設值一致）。
+#                  formal_finetune_mistral_small.log（跟 run_formal_finetune.sh 的預設值一致）。
 #                  訓練程序在跑時一律直接讀它的 /proc/<pid>/fd/1、fd/2（見下方說明），
 #                  不管 stdout 被導向哪個檔案都看得到，不需要設定這個變數。
 #
@@ -28,12 +28,12 @@ set -uo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # 這行曾被註解掉，但下面 snapshot() 找不到訓練程序時仍會讀 $LOG_FILE，搭配 set -u 會直接
 # 「LOG_FILE: unbound variable」中止，整個快照印不出來。
-LOG_FILE="${FINETUNE_LOG:-$PROJECT_DIR/formal_finetune_ministral.log}"
+LOG_FILE="${FINETUNE_LOG:-$PROJECT_DIR/formal_finetune_mistral_small.log}"
 PROC_PATTERN="fine_tuning_vlm_trl_traffic_tune_.*\.py"
 
 # cmdline 沒顯式帶 --model_id 時，訓練腳本會用 utils/fine_tuning/config.py 裡 TrainingConfig 的
 # model_id 預設值；直接從原始碼讀出來，避免這裡寫死一份、config.py 改了預設值卻忘了同步
-# （實測發生過：這裡寫死 Ministral-3-8B，config.py 的預設值其實是 Mistral-Small-3.2-24B）。
+# （實測發生過：這裡曾寫死另一個模型的 model_id，跟 config.py 的預設值 Mistral-Small-3.2-24B 對不上）。
 default_model_id() {
     sed -nE 's/^[[:space:]]*model_id: str = "([^"]+)".*/\1/p' "$PROJECT_DIR/utils/fine_tuning/config.py" 2>/dev/null | head -1
 }

@@ -42,7 +42,7 @@ def _is_checkpoint_complete(checkpoint_dir: str) -> bool:
     """檢查一個 checkpoint 資料夾是否完整可用（沒有在存檔中途被中斷）。
 
     這台機器已知會在隨機 step 數發生硬體/驅動層級的 SIGSEGV/SIGKILL（見
-    fine_tuning_vlm_trl_traffic_tune_ministral_fastmerge.py 的說明），若中斷點剛好落在
+    scripts/run_formal_finetune.sh 的說明），若中斷點剛好落在
     Trainer 正在寫某個 checkpoint 的當下，會留下一個「資料夾存在、但檔案沒寫完」的半殘
     checkpoint——trainer_state.json 是存檔流程裡比較晚才寫的檔案，實測最容易缺漏，resume
     時會直接 FileNotFoundError。

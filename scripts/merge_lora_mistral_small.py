@@ -2,7 +2,8 @@
 # coding: utf-8
 """合併 Mistral-Small-3.2-24B 的 LoRA adapter 回底模型，存成 vLLM 可直接部署的 HF 格式目錄。
 
-照 v2.py 第 9 節的寫法簡化 merge_lora_checkpoint.py（只支援 bf16 的 Mistral-Small，不處理 FP8）。
+照 v2.py 第 9 節的寫法撰寫，取代已移除的通用合併腳本 merge_lora_checkpoint.py（那支主要是為了處理
+Ministral 的 FP8 權重）；這裡只支援 bf16 的 Mistral-Small，不處理 FP8。
 
 用法（repo 根目錄，只用 CPU，約 7 分鐘）：
     CUDA_VISIBLE_DEVICES="" /root/miniconda3/envs/Mistral3-fa-vllm/bin/python scripts/merge_lora_mistral_small.py \\

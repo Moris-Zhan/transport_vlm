@@ -150,7 +150,7 @@ rm -rf "$RUN_DIR"
 
 所有指令都假設在 repo root 底下執行——demo 腳本要用
 `Demo/inference_server.py` 這個相對路徑啟動，**不要** `cd` 進 `Demo/` 目錄再執行，否則下面
-的 curl 範例裡的相對圖片路徑（如 `images/drawio.png`）會對不上。
+的 curl 範例裡的相對圖片路徑（如 `images/真實碰撞構圖/中山東路、博愛路1110101-1131231.jpg`）會對不上。
 
 ## 前提
 
@@ -186,7 +186,7 @@ curl -i http://localhost:8090/
 # 送出分析：確認回傳 303，且 Location 是相對路徑 /result/{id}
 # （曾經有一版寫死成 Foxconn 正式站絕對網址，已修正）
 curl -i -X POST http://localhost:8090/analyze \
-  -F "file=@images/drawio.png;type=image/png" \
+  -F "file=@images/真實碰撞構圖/中山東路、博愛路1110101-1131231.jpg;type=image/jpeg" \
   -F "prompt=請描述這張碰撞構圖" \
   -F "max_tokens=200"
 

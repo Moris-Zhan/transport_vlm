@@ -45,7 +45,6 @@ model_repos = [
 
     # "zai-org/GLM-4.1V-9B-Thinking",
     # "nvidia/Cosmos-Reason2-8B",
-    # "mistralai/Ministral-3-8B-Instruct-2512"
 ]
 
 total_size = 0
